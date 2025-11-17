@@ -1,4 +1,3 @@
-require 'byebug'
 require 'fileutils'
 require 'json'
 require 'progress_bar'
@@ -49,8 +48,7 @@ OptionParser.new do |opts|
   opts.on("--target-auth-url URL", String) { |v| options[:target_auth_url] = v }
   opts.on("--target-api-url URL", String)  { |v| options[:target_api_url]  = v }
 
-  opts.on("--action [export import transfer]", String) { |v| options[:action] = v.downcase.to_sym }
-  # opts.on("-r", "--retry") { |v| options[:retry] = v }
+  opts.on("--action [export import copy]", String) { |v| options[:action] = v.downcase.to_sym }
   opts.on("-v", "--verbose") { |v| options[:verbose] = v }
 end.parse!
 
@@ -66,13 +64,13 @@ required_params = required_params + [
   :source_secret,
   :source_auth_url,
   :source_api_url
-] if [:export, :transfer].include?(options[:action])
+] if [:export, :copy].include?(options[:action])
 required_params = required_params + [
   :target_client_id,
   :target_secret,
   :target_auth_url,
   :target_api_url,
-] if [:import, :transfer].include?(options[:action])
+] if [:import, :copy].include?(options[:action])
 
 missing = required_params.select { |k| options[k].nil? }
 unless missing.empty?
@@ -80,7 +78,7 @@ unless missing.empty?
   exit 1
 end
 
-if [:export, :transfer].include?(options[:action])
+if [:export, :copy].include?(options[:action])
   base = File.join("frameworks", options[:original_framework])
   %w[. controls host_config_rules cloud_config_rules].each do |sub|
     path = (sub == '.') ? base : File.join(base, sub)
@@ -88,8 +86,8 @@ if [:export, :transfer].include?(options[:action])
   end
 end
 
-if !Dir.exist?("frameworks/#{options[:original_framework]}") && [:import, :transfer].include?(options[:action])
-  puts "Framework Missing, please run export first, or run transfer"
+if !Dir.exist?("frameworks/#{options[:original_framework]}") && [:import, :copy].include?(options[:action])
+  puts "Framework Missing, please run export first, or run copy"
   exit 1
 end
 
@@ -371,7 +369,7 @@ payload = {variables: { id: options[:original_framework] },query: LOAD_SECURITY_
 original_framework = JSON.parse(exec_curl(options[:source_api_url], options[:source_api_token], payload))
 
 # Export all the controls, host config and cloud config rules (don't need the built-in ones, but we will check, and ensure the names match, or create them later if required)
-if [:export, :transfer].include?(options[:action])
+if [:export, :copy].include?(options[:action])
   write_audit_log("Retrieving Source Graph Controls")
   bar = ProgressBar.new(original_framework['data']['securityFramework']['controls']['nodes'].count, :bar, :rate, :eta) unless VERBOSE
   original_framework['data']['securityFramework']['controls']['nodes'].each do |control|
@@ -397,7 +395,7 @@ if [:export, :transfer].include?(options[:action])
   end
 end
 
-if [:import, :transfer].include?(options[:action])
+if [:import, :copy].include?(options[:action])
   mappings = {gcr:{}, ccr:{}, hcr: {}}
   new_categories = [] 
   bar = ProgressBar.new(original_framework['data']['securityFramework']['categories'].count, :bar, :rate, :eta) unless VERBOSE
@@ -455,8 +453,7 @@ if [:import, :transfer].include?(options[:action])
   created_framework = JSON.parse(exec_curl(options[:target_api_url], options[:target_api_token], payload))
 
   write_audit_log("Enabling Required Controls")
-  #TODO: Enable all controls at target
-
+  
   write_audit_log("Validating New Framework")
 
   (original_framework['data']['securityFramework']['controls']['nodes'] - created_framework['data']['securityFramework']['controls']['nodes']).select{|gc| gc['id'].start_with?('wc')}.each do |not_copied|
