@@ -1,6 +1,6 @@
 # wiz-compliance-framework-utility
 
-This is a utility script to import / export / transfer compliance frameworks. This is example code only. Read and test everything before using it in your environment.
+This is a utility script to import / export / copy compliance frameworks. This is example code only. Read and test everything before using it in your environment.
 
 ## Prerequisites (macOS)
 - Install Homebrew if you do not have it yet: https://brew.sh
