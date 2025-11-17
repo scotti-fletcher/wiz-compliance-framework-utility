@@ -36,5 +36,8 @@ ruby framework.rb
 ## Limitations
 - Will not re-create custom Host Config or Cloud Config rules. Script updates to add this are planned for the future.
 
+## Rule enabling behavior
+- Any Host Config Rules or Cloud Config Rules that are imported / copied will be enabled on the target after copy/import. If additional rules are enabled, additional findings may be created.
+
 ## Disclaimer
 - This repository contains example code only. Review and test thoroughly before using it in your own environment.
