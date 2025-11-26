@@ -1,3 +1,28 @@
+UPDATE_SECURITY_FRAMEWORK_MUTATION = <<~GRAPHQL
+  mutation UpdateSecurityFramework($input: UpdateSecurityFrameworkInput!) {
+    updateSecurityFramework(input: $input) {
+      framework {
+        id
+        enabled
+        name
+        description
+
+        categories {
+          id
+          name
+          description
+
+          subCategories {
+            id
+            title
+            description
+          }
+        }
+      }
+    }
+  }
+GRAPHQL
+
 UPDATE_CLOUD_CONFIG_RULE_MUTATION = <<~GRAPHQL
   mutation UpdateCloudConfigurationRule(
     $ruleId: ID!

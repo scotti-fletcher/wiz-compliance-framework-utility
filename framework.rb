@@ -2,6 +2,7 @@ require 'fileutils'
 require 'json'
 require 'progress_bar'
 require 'open3'
+require 'byebug'
 require 'optparse'
 require 'terminal-table'
 require_relative 'query.rb'
@@ -229,6 +230,7 @@ def sync_graph_control(control_node, options, existing_mappings)
   return mapped_gcr[:to] unless mapped_gcr.nil?
 
   control_to_check = JSON.parse(File.read("frameworks/#{ORIGINAL_FRAMEWORK}/controls/#{control_node['id']}"))
+  created_by = control_node['id'].start_with?('wc-') ? ["BUILT_IN"] : ["USER"]
   variables = {
     first: 30,
     orderBy: {
@@ -237,7 +239,7 @@ def sync_graph_control(control_node, options, existing_mappings)
     },
     filterBy: {
       search: control_to_check["data"]["control"]["name"],
-      createdBy: ["USER"]
+    createdBy: created_by
     }
   }
   body = {
@@ -246,7 +248,7 @@ def sync_graph_control(control_node, options, existing_mappings)
   }.to_json
   control_check = JSON.parse(exec_curl(options[:target_api_url], options[:target_api_token], body))
 
-  if control_check['data']['controls']['totalCount'] == 0
+  if control_check['data']['controls']['totalCount'] == 0 && !control_node['id'].start_with?('wc-') 
     # There's no control with this name. Yeah it's not ideal, we could look to validate rules based on the rule definition itself, maybe in future
     write_audit_log("Creating control \"#{control_to_check['data']['control']['name']}\"")
     new_control = {"input":{"description":control_to_check['data']['control']['description'],"name":control_to_check['data']['control']['name'],"query":control_to_check['data']['control']['query'],"severity":control_to_check['data']['control']['severity'],"resolutionRecommendation":control_to_check['data']['control']['resolutionRecommendation'],"scopeQuery":control_to_check['data']['control']['scopeQuery'],"projectId":"*","tags":control_to_check['data']['control']['tagsV2']}}
@@ -409,15 +411,16 @@ if [:import, :copy].include?(options[:action])
       host_controls_to_add = []
 
       # Lets check graph controls
+    
       sub_category['controls']['nodes'].each do |control_node|
-        if control_node['id'].start_with?('wc')  #TODO: We need to ensure we're actually checking these exist at the target too!
+        if control_node['id'].start_with?('wc') 
           graph_controls_to_add << control_node['id']
           mappings[:gcr][control_node['id']] = {to: control_node['id']}
           enable_control(options[:target_api_token], options[:target_api_url], control_node['id'])
         else # If we have any controls which are custom (not starting with 'wc') then we need to add them 
           gcr_to_sync = sync_graph_control(control_node, options, mappings)
           mappings[:gcr][control_node['id']] = {to: gcr_to_sync}
-          graph_controls_to_add << gcr_to_sync
+          graph_controls_to_add << gcr_to_sync unless gcr_to_sync.nil?
           enable_control(options[:target_api_token], options[:target_api_url], gcr_to_sync)
         end
       end
@@ -444,16 +447,38 @@ if [:import, :copy].include?(options[:action])
     bar.increment! unless VERBOSE
   end
 
+
   new_framework = {"input":{"name":original_framework['data']['securityFramework']['name'],"description":original_framework['data']['securityFramework']['description'],"categories":new_categories}}
+
   payload = {variables: new_framework,query: CREATE_SECURITY_FRAMEWORK_MUTATION}.to_json
   new_framework_id = JSON.parse(exec_curl(options[:target_api_url], options[:target_api_token], payload))['data']['createSecurityFramework']['framework']['id']
   sleep(10) # Wait for the backend to register the new object
-
   payload = {variables: { id: new_framework_id },query: LOAD_SECURITY_FRAMEWORK_QUERY}.to_json
   created_framework = JSON.parse(exec_curl(options[:target_api_url], options[:target_api_token], payload))
-
-  write_audit_log("Enabling Required Controls")
   
+  # This is now where we need to add a re-push of the policy because in some tenants some controls will not be added (seems to be a sync issue)
+  categories_to_patch = []  
+  created_framework['data']['securityFramework']['categories'].each do |category|
+  sub_categories_to_patch = []
+  category['subCategories'].each do |sub_category|
+      sub_categories_to_patch <<  {
+        id: sub_category['id'],
+        title: sub_category['title'],
+        description: sub_category['description'],
+        tags: [],
+        controls: sub_category['controls']['nodes'] = (new_framework[:input][:categories].select{|cat| cat[:name] == category['name']}[0][:subCategories].select{|sub_cat| sub_cat[:title] == sub_category['title']}[0][:controls]),
+        cloudConfigurationRules: (new_framework[:input][:categories].select{|cat| cat[:name] == category['name']}[0][:subCategories].select{|sub_cat| sub_cat[:title] == sub_category['title']}[0][:cloudConfigurationRules]),
+        hostConfigurationRules: (new_framework[:input][:categories].select{|cat| cat[:name] == category['name']}[0][:subCategories].select{|sub_cat| sub_cat[:title] == sub_category['title']}[0][:hostConfigurationRules])
+      }
+    end
+    categories_to_patch << {id: category['id'], name: category['name'],  description: "", subCategories: sub_categories_to_patch}
+  end
+
+  to_update = {id: new_framework_id, patch: {categories: categories_to_patch}, patchOptions: {unassignPoliciesOnAllEmptySubCategories: true}}
+  payload = {variables: { input: to_update }, query: UPDATE_SECURITY_FRAMEWORK_MUTATION}.to_json
+  exec_curl(options[:target_api_url], options[:target_api_token], payload)
+
+
   write_audit_log("Validating New Framework")
 
   (original_framework['data']['securityFramework']['controls']['nodes'] - created_framework['data']['securityFramework']['controls']['nodes']).select{|gc| gc['id'].start_with?('wc')}.each do |not_copied|
